@@ -1,6 +1,7 @@
 package com.chris.app.saveme;
 
 import android.app.Application;
+import android.app.ProgressDialog;
 import android.content.Intent;
 import android.content.IntentSender;
 import android.content.SharedPreferences;
@@ -12,9 +13,21 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.ListAdapter;
+import android.widget.ListView;
+import android.widget.SimpleAdapter;
+import android.widget.TextView;
 import android.widget.Toast;
 
+import com.android.volley.Response;
+import com.android.volley.VolleyError;
+import com.android.volley.VolleyLog;
+import com.android.volley.toolbox.JsonArrayRequest;
+import com.chris.app.saveme.adapters.VolleyAdapter;
 import com.facebook.CallbackManager;
 import com.facebook.FacebookCallback;
 import com.facebook.FacebookException;
@@ -26,24 +39,29 @@ import com.facebook.login.LoginManager;
 import com.facebook.login.LoginResult;
 
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
+import com.google.android.gms.appdatasearch.GetRecentContextCall;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.plus.Plus;
 import com.google.android.gms.plus.model.people.Person;
 
-public class MainActivity extends AppCompatActivity implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener{
+public class MainActivity extends AppCompatActivity implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
 
     private SharedPreferences settings;
     private String userName, userEmail;
     // Google +
     private static final int RC_SIGN_IN = 0;
-    private static final String TAG = "MainActivity";
+    private static final String TAG1 = "MainActivity";
     // Profile pic image size in pixels
     private static final int PROFILE_PIC_SIZE = 400;
     // Google client to interact with Google API
@@ -56,14 +74,32 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
     // Creating Facebook CallbackManager Value
     public static CallbackManager callbackmanager;
 
+    ArrayList<HashMap<String, String>> oslist = new ArrayList<HashMap<String, String>>();
+    ListView list;
+
+    // json object response url
+    private String urlJsonObj = "http://api.androidhive.info/volley/person_object.json";
+
+    // json array response url
+    private String urlJsonArry = "http://saveme.ie/api/deals";
+
+    private static String TAG = MainActivity.class.getSimpleName();
+    private Button btnMakeObjectRequest, btnMakeArrayRequest;
+
+    // Progress dialog
+    private ProgressDialog pDialog;
+
+    private TextView txtResponse;
+
+    // temporary string to show the parsed response
+    private String jsonResponse;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         // Initialize SDK before setContentView(Layout ID)
         FacebookSdk.sdkInitialize(getApplicationContext());
-
-
-
         setContentView(R.layout.activity_main);
 
         // Get SharedPreference Login
@@ -71,12 +107,20 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
         userEmail = settings.getString("email", "");
         userName = settings.getString("name", "");
 
-
         // Initializing google plus api client
         mGoogleApiClient = new GoogleApiClient.Builder(this)
                 .addConnectionCallbacks(this)
                 .addOnConnectionFailedListener(this).addApi(Plus.API)
                 .addScope(Plus.SCOPE_PLUS_LOGIN).build();
+
+        oslist = new ArrayList<HashMap<String, String>>();
+
+        pDialog = new ProgressDialog(this);
+        pDialog.setMessage("Please wait...");
+        pDialog.setCancelable(false);
+
+        makeJsonArrayRequest();
+
     }
 
     @Override
@@ -121,7 +165,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
             }
         }
 
-  //        callbackmanager.onActivityResult(requestCode, resultCode, data);
+        //        callbackmanager.onActivityResult(requestCode, resultCode, data);
 
 
     }
@@ -134,7 +178,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
 
     /**
      * Sign-in into google
-     * */
+     */
     private void signInWithGplus() {
         if (!mGoogleApiClient.isConnecting()) {
             mSignInClicked = true;
@@ -159,7 +203,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
 
     /**
      * Fetching user's information name, email, profile pic
-     * */
+     */
     private void getProfileInformation() {
         try {
             if (Plus.PeopleApi.getCurrentPerson(mGoogleApiClient) != null) {
@@ -170,7 +214,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
                 String personGooglePlusProfile = currentPerson.getUrl();
                 String email = Plus.AccountApi.getAccountName(mGoogleApiClient);
 
-                Log.e(TAG, "Name: " + personName + ", plusProfile: "
+                Log.e(TAG1, "Name: " + personName + ", plusProfile: "
                         + personGooglePlusProfile + ", email: " + email
                         + ", Image: " + personPhotoUrl);
 
@@ -184,7 +228,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
                         personPhotoUrl.length() - 2)
                         + PROFILE_PIC_SIZE;
 
-             //   new LoadProfileImage(imgProfilePic).execute(personPhotoUrl);
+                //   new LoadProfileImage(imgProfilePic).execute(personPhotoUrl);
 
             } else {
                 Toast.makeText(getApplicationContext(),
@@ -197,7 +241,7 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
 
     /**
      * Background Async task to load user profile picture from url
-     * */
+     */
     private class LoadProfileImage extends AsyncTask<String, Void, Bitmap> {
         ImageView bmImage;
 
@@ -337,9 +381,6 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
                 });
 
 
-
-
-
     }
 
     @Override
@@ -371,5 +412,102 @@ public class MainActivity extends AppCompatActivity implements GoogleApiClient.C
 
     }
 
+    private void makeJsonArrayRequest() {
+
+        showpDialog();
+
+        JsonArrayRequest req = new JsonArrayRequest(urlJsonArry,
+                new Response.Listener<JSONArray>() {
+                    @Override
+                    public void onResponse(JSONArray response) {
+                        Log.d(TAG, response.toString());
+
+                        try {
+                            // Parsing json array response
+                            // loop through each json object
+                            jsonResponse = "";
+                            for (int i = 0; i < response.length(); i++) {
+
+                                JSONObject person = (JSONObject) response
+                                        .get(i);
+
+                                String name = person.getString("title");
+                                String email = person.getString("urlimage");
+                                JSONObject phone = person
+                                        .getJSONObject("user");
+                                String mobile = phone.getString("displayName");
+
+                                ImageView thumbnail = (ImageView) findViewById(R.id.thumbnail);
+
+                                jsonResponse += "Name: " + name + "\n\n";
+                                jsonResponse += "Email: " + email + "\n\n";
+                                jsonResponse += "Home: " + mobile + "\n\n";
+                                jsonResponse += "Mobile: " + mobile + "\n\n\n";
+
+                                HashMap<String, String> map = new HashMap<String, String>();
+
+                                map.put("1", name);
+                                map.put("2", email);
+                                map.put("3", mobile);
+                                map.put("4", email);
+
+                                oslist.add(map);
+                                list=(ListView)findViewById(R.id.listView);
+
+                                ListAdapter adapter = new SimpleAdapter(MainActivity.this, oslist,
+                                        R.layout.list_item_1,
+                                        new String[] { "1", "2", "3"}, new int[] {
+                                        R.id.name,R.id.email, R.id.home});
+
+
+                                list.setAdapter(adapter);
+
+
+                                list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+
+                                    @Override
+                                    public void onItemClick(AdapterView<?> parent, View view,
+                                                            int position, long id) {
+                                        Toast.makeText(MainActivity.this, "You Clicked at "+oslist.get(+position).get("1"), Toast.LENGTH_SHORT).show();
+
+                                    }
+                                });
+
+                            }
+
+//                            txtResponse.setText(jsonResponse);
+
+                        } catch (JSONException e) {
+                            e.printStackTrace();
+                            Toast.makeText(getApplicationContext(),
+                                    "Error: " + e.getMessage(),
+                                    Toast.LENGTH_LONG).show();
+                        }
+
+                        hidepDialog();
+                    }
+                }, new Response.ErrorListener() {
+            @Override
+            public void onErrorResponse(VolleyError error) {
+                VolleyLog.d(TAG, "Error: " + error.getMessage());
+                Toast.makeText(getApplicationContext(),
+                        error.getMessage(), Toast.LENGTH_SHORT).show();
+                hidepDialog();
+            }
+        });
+
+        // Adding request to request queue
+        VolleyAdapter.getInstance().addToRequestQueue(req);
+    }
+
+    private void showpDialog() {
+        if (!pDialog.isShowing())
+            pDialog.show();
+    }
+
+    private void hidepDialog() {
+        if (pDialog.isShowing())
+            pDialog.dismiss();
+    }
 
 }
